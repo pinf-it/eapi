@@ -1,3 +1,3 @@
 #/usr/bin/which bash -e
 
-mocha tests.js
+../../node_modules/.bin/mocha tests.js

@@ -80,9 +80,7 @@ class Transaction {
                     log(`Applying change to '${path.join('/')}':`, change);
 
                     change.entity = type;
-                    change.mountPropertyPath = path.concat(change.name);
-
-                    layerChanges.push(change);
+                    change.treePath = path.concat(change.name);
 
                     try {
                         const adapterName = type.split(':')[0];
@@ -93,7 +91,14 @@ class Transaction {
                             throw new Error(`Handler for '${adapterName}:${change.action}' not found!`);
                         }
 
-                        const response = await self.instance.adapters[adapterName].handlers[change.action](change.name, change.config, parent, change.existingConfig);
+                        const frozenChange = LODASH.cloneDeep(change);
+
+                        const response = await self.instance.adapters[adapterName].handlers[change.action](change.name, change.request, parent, change.existingConfig);
+
+                        frozenChange.response = response;
+
+                        layerChanges.push(frozenChange);
+
                         if (change.action === 'delete') {
                             delete after[path.join('/')][change.name];
                         } else
@@ -177,8 +182,8 @@ class Transaction {
                             expectedConfig = LODASH.merge({}, expectedConfig);
                             existingConfig = LODASH.merge({}, existingConfig);
                             
-                            if (response.ignoreConfigProperties) {
-                                TRAVERSE(response.ignoreConfigProperties).forEach(function (node) {
+                            if (response.propertyOptions) {
+                                TRAVERSE(response.propertyOptions).forEach(function (node) {
                                     const path = this.path;
                                     function pathsForConfig (config, checkValue) {
                                         const paths = [];
@@ -205,8 +210,8 @@ class Transaction {
                                         return paths;
                                     }
                                     if (
-                                        node === 'EXPECTED' ||
-                                        /^function EXPECTED /.test(node.toString())
+                                        node === 'CREATE_ONLY' ||
+                                        /^function CREATE_ONLY /.test(node.toString())
                                     ) {
                                         pathsForConfig(expectedConfig, node).forEach(function (path) {
                                             // Ignore properties that are expected and do not exist
@@ -218,8 +223,8 @@ class Transaction {
                                         });
                                     } else
                                     if (
-                                        node === 'EXISTING' ||
-                                        /^function EXISTING /.test(node.toString())
+                                        node === 'IMMUTABLE_RESPONSE' ||
+                                        /^function IMMUTABLE_RESPONSE /.test(node.toString())
                                     ) {
                                         pathsForConfig(existingConfig, node).forEach(function (path) {
                                             // Ignore properties that exist and are not expected
@@ -245,7 +250,7 @@ class Transaction {
                                 changes[path.join('/')].push({
                                     action: 'create',
                                     name: name,
-                                    config: removeContexts(DECLARATIONS[name])
+                                    request: removeContexts(DECLARATIONS[name])
                                 });
                             });
                         }
@@ -255,7 +260,7 @@ class Transaction {
                                 changes[path.join('/')].push({
                                     action: 'delete',
                                     name: name,
-                                    config: removeContexts(existing[path.join('/')][name])
+                                    request: removeContexts(existing[path.join('/')][name])
                                 });
                             });
                         }
@@ -277,7 +282,7 @@ class Transaction {
                                     changes[path.join('/')].push({
                                         action: 'update',
                                         name: name,
-                                        config: expectedConfig,
+                                        request: expectedConfig,
                                         existingConfig: removeContexts(items[name]),
                                         diff: diff
                                     });
@@ -287,6 +292,7 @@ class Transaction {
 
                         if (typeof changes[path.join('/')] !== 'undefined') {
                             if (_repeatedLayerRun) {
+                                console.error("changes:", JSON.stringify(changes, null, 4));
                                 throw new Error(`Layer for type '${type}' and path '${path}' generated changes on verification run!`);
                             }
                         }

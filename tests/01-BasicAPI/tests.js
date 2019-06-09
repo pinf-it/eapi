@@ -8,7 +8,9 @@ describe('eapply', function () {
 
     class SimpleHandler {
 
-        constructor () {
+        constructor (options) {
+            options = options || {};
+
             const self = this;
             self['#'] = 'Handler';
 
@@ -16,12 +18,19 @@ describe('eapply', function () {
 
             self.get = function () {
                 return {
-                    items: servers
+                    items: servers,
+                    propertyOptions: {
+                        "extraData": "IMMUTABLE_RESPONSE",
+                        "apiVersion": "CREATE_ONLY"
+                    }
                 };
             }
             self.create = function (name, config) {
                 if (config.name !== config.name) {
                     throw new Error(`'name' property ('${config.name}') in entity must match entity key '${name}'!`);
+                }
+                if (options.onCreate) {
+                    config = options.onCreate(name, config);
                 }
                 servers[name] = config;
                 return config;
@@ -72,14 +81,17 @@ describe('eapply', function () {
                 {
                     "action": "create",
                     "name": "server-1",
-                    "config": {
+                    "request": {
                         "name": "server-1"
                     },
                     "entity": "@servers",
-                    "mountPropertyPath": [
+                    "treePath": [
                         "@servers",
                         "server-1"
-                    ]
+                    ],
+                    "response": {
+                        "name": "server-1"
+                    }
                 }
             ],
             "configBefore": {},
@@ -93,6 +105,145 @@ describe('eapply', function () {
         });
     });
 
+    it('Extra response property', async function () {
+
+        ASSERT.equal(typeof EAPPLY.apply, 'function');
+
+        const result = await EAPPLY.apply({
+            "@servers": {
+                "server-1": {
+                    "name": "server-1"
+                }
+            }
+        }, {
+            "@servers": new SimpleHandler({
+                onCreate: function (name, record) {
+                    record.extraData = {
+                        forName: name,
+                        foo: "bar"
+                    };
+                    return record;
+                }
+            })
+        });
+
+//        console.log("RESULT", JSON.stringify(result, null, 4));
+
+        ASSERT.deepEqual(JSON.parse(JSON.stringify(result)), {
+            "#": "Transaction",
+            "instance": {
+                "#": "EntityModel",
+                "adapters": {
+                    "@servers": {
+                        "#": "EntityAdapter",
+                        "handlers": {
+                            "#": "Handler"
+                        }
+                    }
+                }
+            },
+            "status": "done",
+            "changes": [
+                {
+                    "action": "create",
+                    "name": "server-1",
+                    "request": {
+                        "name": "server-1"
+                    },
+                    "entity": "@servers",
+                    "treePath": [
+                        "@servers",
+                        "server-1"
+                    ],
+                    "response": {
+                        "name": "server-1",
+                        "extraData": {
+                            "forName": "server-1",
+                            "foo": "bar"
+                        }
+                    }
+                }
+            ],
+            "configBefore": {},
+            "configAfter": {
+                "@servers": {
+                    "server-1": {
+                        "name": "server-1",
+                        "extraData": {
+                            "forName": "server-1",
+                            "foo": "bar"
+                        }
+                    }
+                }
+            }
+        });
+    });
+
+    it('Extra config property', async function () {
+
+        ASSERT.equal(typeof EAPPLY.apply, 'function');
+
+        const result = await EAPPLY.apply({
+            "@servers": {
+                "server-1": {
+                    "name": "server-1",
+                    "apiVersion": "0.1"
+                }
+            }
+        }, {
+            "@servers": new SimpleHandler({
+                onCreate: function (name, record) {
+                    delete record.apiVersion;
+                    return record;
+                }
+            })
+        });
+
+//        console.log("RESULT", JSON.stringify(result, null, 4));
+
+        ASSERT.deepEqual(JSON.parse(JSON.stringify(result)), {
+            "#": "Transaction",
+            "instance": {
+                "#": "EntityModel",
+                "adapters": {
+                    "@servers": {
+                        "#": "EntityAdapter",
+                        "handlers": {
+                            "#": "Handler"
+                        }
+                    }
+                }
+            },
+            "status": "done",
+            "changes": [
+                {
+                    "action": "create",
+                    "name": "server-1",
+                    "request": {
+                        "name": "server-1",
+                        "apiVersion": "0.1"
+                    },
+                    "entity": "@servers",
+                    "treePath": [
+                        "@servers",
+                        "server-1"
+                    ],
+                    "response": {
+                        "name": "server-1"
+                    }
+                }
+            ],
+            "configBefore": {},
+            "configAfter": {
+                "@servers": {
+                    "server-1": {
+                        "name": "server-1"
+                    }
+                }
+            }
+        });
+    });
+    
     it('Multiple & One Directly Nested', async function () {
 
         ASSERT.equal(typeof EAPPLY.apply, 'function');
@@ -143,39 +294,48 @@ describe('eapply', function () {
                 {
                     "action": "create",
                     "name": "server-1",
-                    "config": {
+                    "request": {
                         "name": "server-1"
                     },
                     "entity": "@servers",
-                    "mountPropertyPath": [
+                    "treePath": [
                         "@servers",
                         "server-1"
-                    ]
+                    ],
+                    "response": {
+                        "name": "server-1"
+                    }
                 },
                 {
                     "action": "create",
                     "name": "server-2",
-                    "config": {
+                    "request": {
                         "name": "server-2"
                     },
                     "entity": "@servers",
-                    "mountPropertyPath": [
+                    "treePath": [
                         "@servers",
                         "server-2"
-                    ]
+                    ],
+                    "response": {
+                        "name": "server-2"
+                    }
                 },
                 {
                     "action": "create",
                     "name": "container-1",
-                    "config": {
+                    "request": {
                         "name": "container-1"
                     },
                     "entity": "@containers",
-                    "mountPropertyPath": [
+                    "treePath": [
                         "server-1",
                         "@containers",
                         "container-1"
-                    ]
+                    ],
+                    "response": {
+                        "name": "container-1"
+                    }
                 }
             ],
             "configBefore": {},
