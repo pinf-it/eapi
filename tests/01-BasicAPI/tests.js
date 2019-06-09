@@ -1,7 +1,7 @@
 
 const ASSERT = require("assert");
 const LODASH = require("lodash");
-const EAPPLY = require(".");
+const EAPPLY = require("../..");
 
 
 describe('eapply', function () {
