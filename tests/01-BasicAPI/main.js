@@ -1,3 +1,4 @@
+#!/usr/bin/env bash.origin.test via github.com/mochajs/mocha
 
 const ASSERT = require("assert");
 const LODASH = require("lodash");

@@ -5,9 +5,6 @@
     "__devDependencies": {
         "bash.origin.test": "^0.1.40"
     },
-    "devDependencies": {
-        "mocha": "^6.1.4"
-    },
     "scripts": {
         "test": "bash.origin.test tests"
     },

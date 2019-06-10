@@ -1,0 +1,11 @@
+>>>TEST_IGNORE_LINE:\d+\spassing\s\([^\)]+\)<<<
+
+
+  eapply
+    ✓ Simple
+    ✓ Extra response property
+    ✓ Extra config property
+    ✓ Multiple & One Directly Nested
+
+
+
