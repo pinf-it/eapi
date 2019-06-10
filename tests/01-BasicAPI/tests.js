@@ -329,6 +329,7 @@ describe('eapply', function () {
                     },
                     "entity": "@containers",
                     "treePath": [
+                        "@servers",
                         "server-1",
                         "@containers",
                         "container-1"
@@ -348,7 +349,7 @@ describe('eapply', function () {
                         "name": "server-2"
                     }
                 },
-                "server-1/@containers": {
+                "@servers/server-1/@containers": {
                     "container-1": {
                         "name": "container-1"
                     }

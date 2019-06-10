@@ -1,5 +1,5 @@
 
-const VERBOSE = false;
+const VERBOSE = true;
 
 const UTIL = require("util");
 const PATH = require("path");
@@ -71,7 +71,7 @@ class Transaction {
             const changes = {};
             const after = {};
 
-            async function applyChanges (type, path, parent) {
+            async function applyChanges (type, path, parents) {
                 if (!changes[path.join('/')]) {
                     return false;
                 }
@@ -93,9 +93,13 @@ class Transaction {
 
                         const frozenChange = LODASH.cloneDeep(change);
 
-                        const response = await self.instance.adapters[adapterName].handlers[change.action](change.name, change.request, parent, change.existingConfig);
+                        log(`Apply change to '${change.name}':`, change.request);
+
+                        const response = await self.instance.adapters[adapterName].handlers[change.action](change.name, change.request, parents, change.existingConfig);
 
                         frozenChange.response = response;
+
+                        log("Applied change:", frozenChange);
 
                         layerChanges.push(frozenChange);
 
@@ -113,8 +117,9 @@ class Transaction {
                 return true;
             }
 
-            async function forLayer (DECLARATIONS, type, path, parent, _repeatedLayerRun) {
+            async function forLayer (DECLARATIONS, type, path, parents, _repeatedLayerRun) {
                 path = path || [];
+                parents = parents || {};
 
                 try {
 
@@ -132,215 +137,261 @@ class Transaction {
 
                         if (!self.instance.adapters[typeParts[0]]) {
                             console.error("path", path);
-                            console.error("parent", parent);
+                            console.error("parents", parents);
                             throw new Error(`No handlers found for '${typeParts[0]}'!`);
                         }
                         typeParts[1] = typeParts[1] || 'get';
                         if (!self.instance.adapters[typeParts[0]].handlers[typeParts[1]]) {
                             console.error("path", path);
-                            console.error("parent", parent);
+                            console.error("parents", parents);
                             throw new Error(`Handler for '${type}' not found!`);
                         }
 
                         log(`Calling:`, path.join('/'));
                         
-                        const response = await self.instance.adapters[typeParts[0]].handlers[typeParts[1]](parent, path);
+                        const response = await self.instance.adapters[typeParts[0]].handlers[typeParts[1]](parents, path);
 
-                        log(`Response:`, response);
+                        log(`Response for '${type}':`, response);
 
+                        let entityType = "items.map";
                         if (!response || !response.items) {
-                            existing[path.join('/')] = response.items;
-                            after[path.join('/')] = LODASH.merge({}, response.items);
+                            entityType = "object";
 
+                            existing[path.join('/')] = response;
+                            after[path.join('/')] = LODASH.merge({}, response);
+
+                            // TODO: Repeat request and eventually quit.
+                            //throw new Error(`No items in response!`);
+                            /*
                             return Promise.all(Object.keys(DECLARATIONS).map(async function (key) {
                                 if (/^@/.test(key)) {
                                     return forLayer(DECLARATIONS[key], key, path.concat(key), after[path.join('/')]);
                                 }
                             }));
-                        }
+                            */
+                        } else {
 
-                        const items = response.items;
+                            const items = response.items;
 
-                        existing[path.join('/')] = items;
-                        after[path.join('/')] = LODASH.merge({}, items);
-                        delete changes[path.join('/')];
+                            existing[path.join('/')] = items;
+                            after[path.join('/')] = LODASH.merge({}, items);
+                            delete changes[path.join('/')];
 
-                        const added = LODASH.difference(Object.keys(DECLARATIONS), Object.keys(items), response.ignoreNames || []);
-                        const removed = LODASH.difference(Object.keys(items), Object.keys(DECLARATIONS), response.ignoreNames || []);
-                        const keeping = LODASH.difference(Object.keys(DECLARATIONS), added, removed);
+                            const added = LODASH.difference(Object.keys(DECLARATIONS), Object.keys(items), response.ignoreKeys || []);
+                            const removed = LODASH.difference(Object.keys(items), Object.keys(DECLARATIONS), response.ignoreKeys || []);
+                            const keeping = LODASH.difference(Object.keys(DECLARATIONS), added, removed);
 
-                        function removeContexts (config) {
-                            return TRAVERSE(config).map(function (node) {
-                                if (/^@/.test(this.key)) {
-                                    this.delete(true);
-                                }
-                            });
-                        }
+                            function removeContexts (config) {
+                                return TRAVERSE(config).map(function (node) {
+                                    if (/^@/.test(this.key)) {
+                                        this.delete(true);
+                                    }
+                                });
+                            }
 
-                        // TODO: Optionally use https://github.com/epoberezkin/ajv#filtering-data
-                        function removeProperties (expectedConfig, existingConfig) {
-                            expectedConfig = LODASH.merge({}, expectedConfig);
-                            existingConfig = LODASH.merge({}, existingConfig);
-                            
-                            if (response.propertyOptions) {
-                                TRAVERSE(response.propertyOptions).forEach(function (node) {
-                                    const path = this.path;
-                                    function pathsForConfig (config, checkValue) {
-                                        const paths = [];
-                                        let foundArray = false;
-                                        path.forEach(function (pathSegment, i) {
-                                            if (pathSegment === '0') {
-                                                foundArray = true;
-                                                const items = LODASH.get(config, path.slice(0, i), undefined);
-                                                if (items !== undefined) {
-                                                    for (let j=0; j<items.length; j++) {
-                                                        if (
-                                                            typeof checkValue !== "function" ||
-                                                            checkValue(items[j])
-                                                        ) {
-                                                            paths.push(path.slice(0, i).concat(`${j}`, path.slice(i+1)).concat());
+                            // TODO: Optionally use https://github.com/epoberezkin/ajv#filtering-data
+                            function removeProperties (expectedConfig, existingConfig) {
+                                expectedConfig = LODASH.merge({}, expectedConfig);
+                                existingConfig = LODASH.merge({}, existingConfig);
+                                
+                                if (response.propertyOptions) {
+                                    TRAVERSE(response.propertyOptions).forEach(function (node) {
+                                        const path = this.path;
+                                        function pathsForConfig (config, checkValue) {
+                                            const paths = [];
+                                            let foundArray = false;
+                                            path.forEach(function (pathSegment, i) {
+                                                if (pathSegment === '0') {
+                                                    foundArray = true;
+                                                    const items = LODASH.get(config, path.slice(0, i), undefined);
+                                                    if (items !== undefined) {
+                                                        for (let j=0; j<items.length; j++) {
+                                                            if (
+                                                                typeof checkValue !== "function" ||
+                                                                checkValue(items[j])
+                                                            ) {
+                                                                paths.push(path.slice(0, i).concat(`${j}`, path.slice(i+1)).concat());
+                                                            }
                                                         }
                                                     }
                                                 }
+                                            });
+                                            if (!foundArray) {
+                                                paths.push(path);
                                             }
-                                        });
-                                        if (!foundArray) {
-                                            paths.push(path);
+                                            return paths;
                                         }
-                                        return paths;
-                                    }
-                                    if (
-                                        node === 'CREATE_ONLY' ||
-                                        /^function CREATE_ONLY /.test(node.toString())
-                                    ) {
-                                        pathsForConfig(expectedConfig, node).forEach(function (path) {
-                                            // Ignore properties that are expected and do not exist
-                                            if (LODASH.get(existingConfig, path, undefined) === undefined) {
-                                                if (LODASH.get(expectedConfig, path, undefined) !== undefined) {
-                                                    LODASH.unset(expectedConfig, path);
+                                        if (
+                                            node === 'CREATE_ONLY' ||
+                                            /^function CREATE_ONLY /.test(node.toString())
+                                        ) {
+                                            pathsForConfig(expectedConfig, node).forEach(function (path) {
+                                                // Ignore properties that are expected and do not exist
+                                                if (LODASH.get(existingConfig, path, undefined) === undefined) {
+                                                    if (LODASH.get(expectedConfig, path, undefined) !== undefined) {
+                                                        LODASH.unset(expectedConfig, path);
+                                                    }
                                                 }
-                                            }
-                                        });
-                                    } else
-                                    if (
-                                        node === 'IMMUTABLE_RESPONSE' ||
-                                        /^function IMMUTABLE_RESPONSE /.test(node.toString())
-                                    ) {
-                                        pathsForConfig(existingConfig, node).forEach(function (path) {
-                                            // Ignore properties that exist and are not expected
-                                            if (LODASH.get(expectedConfig, path, undefined) === undefined) {
-                                                if (LODASH.get(existingConfig, path, undefined) !== undefined) {
-                                                    LODASH.unset(existingConfig, path);
+                                            });
+                                        } else
+                                        if (
+                                            node === 'IMMUTABLE_RESPONSE' ||
+                                            /^function IMMUTABLE_RESPONSE /.test(node.toString())
+                                        ) {
+                                            pathsForConfig(existingConfig, node).forEach(function (path) {
+                                                // Ignore properties that exist and are not expected
+                                                if (LODASH.get(expectedConfig, path, undefined) === undefined) {
+                                                    if (LODASH.get(existingConfig, path, undefined) !== undefined) {
+                                                        LODASH.unset(existingConfig, path);
+                                                    }
                                                 }
-                                            }
-                                        });
-                                    }
-                                });
+                                            });
+                                        }
+                                    });
+                                }
+
+                                return {
+                                    expectedConfig: expectedConfig,
+                                    existingConfig: existingConfig
+                                }
                             }
 
-                            return {
-                                expectedConfig: expectedConfig,
-                                existingConfig: existingConfig
+                            if (added.length) {
+                                added.forEach(function (name) {
+                                    changes[path.join('/')] = changes[path.join('/')] || [];
+                                    changes[path.join('/')].push({
+                                        action: 'create',
+                                        name: name,
+                                        request: removeContexts(DECLARATIONS[name])
+                                    });
+                                });
                             }
-                        }
-
-                        if (added.length) {
-                            added.forEach(function (name) {
-                                changes[path.join('/')] = changes[path.join('/')] || [];
-                                changes[path.join('/')].push({
-                                    action: 'create',
-                                    name: name,
-                                    request: removeContexts(DECLARATIONS[name])
+                            if (removed.length) {
+                                removed.forEach(function (name) {
+                                    changes[path.join('/')] = changes[path.join('/')] || [];
+                                    changes[path.join('/')].push({
+                                        action: 'delete',
+                                        name: name,
+                                        request: removeContexts(existing[path.join('/')][name])
+                                    });
                                 });
-                            });
-                        }
-                        if (removed.length) {
-                            removed.forEach(function (name) {
-                                changes[path.join('/')] = changes[path.join('/')] || [];
-                                changes[path.join('/')].push({
-                                    action: 'delete',
-                                    name: name,
-                                    request: removeContexts(existing[path.join('/')][name])
-                                });
-                            });
-                        }
-                        if (keeping.length) {
-                            keeping.forEach(function (name) {
+                            }
+                            if (keeping.length) {
+                                keeping.forEach(function (name) {
 
-                                const { expectedConfig, existingConfig } = removeProperties(removeContexts(DECLARATIONS[name]), removeContexts(items[name]));
+                                    const { expectedConfig, existingConfig } = removeProperties(removeContexts(DECLARATIONS[name]), removeContexts(items[name]));
 
 //console.log("expectedConfig", JSON.stringify(expectedConfig, null, 4));
 //console.log("existingConfig", JSON.stringify(existingConfig, null, 4));
 
-                                const diff = DIFF(expectedConfig, existingConfig);
-                                if (
-                                    Object.keys(diff.added).length ||
-                                    Object.keys(diff.deleted).length ||
-                                    Object.keys(diff.updated).length
-                                ) {
-                                    changes[path.join('/')] = changes[path.join('/')] || [];
-                                    changes[path.join('/')].push({
-                                        action: 'update',
-                                        name: name,
-                                        request: expectedConfig,
-                                        existingConfig: removeContexts(items[name]),
-                                        diff: diff
-                                    });
-                                }
-                            });
-                        }
-
-                        if (typeof changes[path.join('/')] !== 'undefined') {
-                            if (_repeatedLayerRun) {
-                                console.error("changes:", JSON.stringify(changes, null, 4));
-                                throw new Error(`Layer for type '${type}' and path '${path}' generated changes on verification run!`);
+                                    const diff = DIFF(expectedConfig, existingConfig);
+                                    if (
+                                        Object.keys(diff.added).length ||
+                                        Object.keys(diff.deleted).length ||
+                                        Object.keys(diff.updated).length
+                                    ) {
+                                        changes[path.join('/')] = changes[path.join('/')] || [];
+                                        changes[path.join('/')].push({
+                                            action: 'update',
+                                            name: name,
+                                            request: expectedConfig,
+                                            existingConfig: removeContexts(items[name]),
+                                            diff: diff
+                                        });
+                                    }
+                                });
                             }
-                        }
 
-                        const changesApplied = await applyChanges(type, path, parent);
+                            if (typeof changes[path.join('/')] !== 'undefined') {
+                                if (_repeatedLayerRun) {
+                                    console.error("changes:", JSON.stringify(changes, null, 4));
+                                    throw new Error(`Layer for type '${type}' and path '${path}' generated changes on verification run!`);
+                                }
+                            }
 
-                        if (changesApplied) {
-                            if (!_repeatedLayerRun) {
-                                // Re-run the current layer now that a resource has been created/deleted or updated.
+                            const changesApplied = await applyChanges(type, path, parents);
 
-                                log(`Re-run after changes:`, path.join('/'));
+                            if (changesApplied) {
+                                if (!_repeatedLayerRun) {
+                                    // Re-run the current layer now that a resource has been created/deleted or updated.
 
-                                return forLayer(DECLARATIONS, type, path, parent, true);
-                            } else {
-                                throw new Error("This should never be reached as the '_repeatedLayerRun' check above should have thrown!");
+                                    log(`Re-run after changes:`, path.join('/'));
+
+                                    return forLayer(DECLARATIONS, type, path, parents, true);
+                                } else {
+                                    throw new Error("This should never be reached as the '_repeatedLayerRun' check above should have thrown!");
+                                }
                             }
                         }
 
 //console.log("existing", JSON.stringify(existing, null, 4));
-//console.log("DECLARATIONS", JSON.stringify(DECLARATIONS, null, 4));                        
+//console.log("DECLARATIONS", JSON.stringify(DECLARATIONS, null, 4));
 
-                        return Promise.all(Object.keys(DECLARATIONS).map(async function (name) {
-                            if (existing[path.join('/')][name]) {
-                                
-                                const subLayerPaths = [];
+                        async function forNode (config, layerParents, subLayerBasePath) {
 
-                                TRAVERSE(DECLARATIONS[name]).map(function (node) {
-                                    if (/^@/.test(this.key)) {
-                                        subLayerPaths.push([name].concat(this.path));
-                                    }
-                                });
+                            const subLayerPaths = [];
 
-                                if (!subLayerPaths.length) {
-                                    return;
+                            TRAVERSE(config).map(function (node) {
+                                if (/^@/.test(this.key)) {
+                                    subLayerPaths.push(this.path);
+                                    this.update(node, true);
                                 }
-
-                                return Promise.all(subLayerPaths.map(function (subLayerPath) {
-
-                                    //async function forLayer (DECLARATIONS, type, path, parent)
-                                    return forLayer(
-                                        LODASH.get(DECLARATIONS, subLayerPath),
-                                        subLayerPath[subLayerPath.length - 1],
-                                        subLayerPath,
-                                        existing[path.join('/')][name]
-                                    );
-                                }));
+                            });
+                
+                            if (!subLayerPaths.length) {
+                                return;
                             }
-                        }));
+                
+//console.log("subLayerPaths", subLayerPaths);
+                
+                            return Promise.all(subLayerPaths.map(function (subLayerPath) {
+                
+                                //async function forLayer (DECLARATIONS, type, path, parent)
+                                return forLayer(
+                                    LODASH.get(config, subLayerPath),
+                                    subLayerPath[subLayerPath.length - 1],
+                                    [].concat(subLayerBasePath).concat(subLayerPath),
+                                    layerParents
+                                );
+                            }));                            
+                        }
+
+                        if (entityType === "items.map") {
+
+                            let hasPending = false;
+                            await Promise.all(Object.keys(DECLARATIONS).map(async function (name) {
+                                if (existing[path.join('/')][name]) {
+
+                                    const layerParents = LODASH.clone(parents);
+                                    layerParents[type] = after[path.join('/')][name];
+
+                                    return forNode(DECLARATIONS[name], layerParents, [].concat(path).concat([name]));
+                                } else {
+                                    hasPending = true;
+                                }
+                            }));
+
+                            if (hasPending) {
+throw new Error("Has pending!");
+                            }
+
+                            return;
+
+                        } else
+                        if (entityType === "object") {
+
+                            if (!existing[path.join('/')]) {
+throw new Error("Repeat until it exists!");
+                            }
+
+                            const layerParents = LODASH.clone(parents);
+                            layerParents[type] = after[path.join('/')];
+
+                            return forNode(DECLARATIONS, layerParents, [].concat(path));
+
+                        } else {
+                            throw new Error(`entityType '${entityType}' not supported!`);
+                        }
                     }
                 } catch (err) {
                     log(`ERROR while processing layer '${path.join('/')}':`, err);
