@@ -1,5 +1,5 @@
 
-const VERBOSE = true;
+const VERBOSE = false;
 
 const UTIL = require("util");
 const PATH = require("path");
